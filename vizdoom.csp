@@ -1,0 +1,142 @@
+﻿// -*- coding: utf-8 -*-
+//@Source: Vizdoom Game & Deep Reinforcement Learning
+//@Author: 白国臣
+//@Mail: baiguochen@tju.edu.cn
+//@Date: 2020-04-14 13:9:15
+//@Last Modified by:   白国臣
+//@Last Modified time: 2020-04-15 23:29:41
+
+//@Copyright (c) 2020 白国臣
+//@License: This code is distributed under the MIT license. 
+
+
+
+//在射击场景Vizdoom游戏中：
+//	1. M个怪物随机地出现在界面的一端;
+//	2. 智能体有左、右移动和射击三个动作;
+//	3. 怪物只要被击中一次，就会被杀死;
+//	4. 当所有怪物被杀死或射击100次子弹后怪物还没被杀死,则游戏结束。
+//	5. 当1怪物被杀死，智能体得到51奖励分数；
+//	6. 当执行射击后，怪物没有被击中，智能体得到-5分的奖励；
+//	7. 当执行向左或向右行动后，智能体得到-1分的奖励。
+//
+
+#define sameline 1; //hunter&Monter在同一条line上
+#define diffline 0; //hunter&Monster不在同一条line上
+
+#define hited  1; //击中 <==> dead
+#define shooted  0;// 射击没中 <==> live
+#define noshoot 2; //未射击
+
+#define inhand 1;
+#define outhand 0;
+
+#define H 2; //Monster初始化时数量，从0开始编号
+
+var M = H+1; //实时统计游戏中Monster数
+var N = 100; //实时子弹数
+
+var Monster[M]; //Monster
+var Bullet[N]; 
+
+var Hunter = diffline;//both hunter and monster are initialized live 
+//var Monster = diffline;
+var Gun = outhand;
+
+var gamming = 1; //gamming=0结束，gamming =1,running
+var score = 10; //初始化设置分数为大于0，小于100的值
+
+
+//Hunter与某个Monster diffline/sameline,子弹！=0，分数需要在(0,100),Monster的个数不能为0，那么Hunter可以左移，右移，
+//但是Hunter移动需要扣分。如果移动的次数大于100次，游戏
+//
+HunterState(i) = [Hunter == diffline && N != 0 && score <= 100 && score >= 0 && M !=0]
+					left_move.i{
+								Hunter = sameline; 
+								if(score>=0){score = score -1; gamming = 1;}else{gamming = 0;}
+								}->HunterState(i) //左移后Hunter && Monster同一条lien
+				 []
+				 [Hunter == diffline && N != 0 && score <= 100 && score >= 0 && M !=0]
+				 	left_move.i{
+				 				Hunter = diffline; 
+				 				if(score>=0){score = score -1; gamming = 1;}else{gamming = 0;}
+				 				}->HunterState(i) //左移后依旧不在同一line上
+				 []
+				 [Hunter == diffline&& N != 0 && score <= 100 && score >= 0 && M !=0]
+				 	right_move.i{
+				 				Hunter = sameline; 
+				 				if(score>=0){score = score -1; gamming = 1;}else{gamming = 0;} 
+				 				}->HunterState(i) //右移后Hunter与Monster在同一条line
+				 []
+				 [Hunter == diffline&& N != 0 && score <= 100 && score >= 0 && M !=0]
+				 	right_move.i{
+				 				Hunter = diffline; 
+				 				if(score>=0){score = score -1; gamming = 1;}else{gamming = 0;}
+				 				}->HunterState(i); //右移后依旧不在sameline -->diffline
+
+//Gun可以被拿起或放下，如果上述条件满足
+GunState(i) = 	[Gun == outhand]carry_gun.i{Hunter = inhand;}->GunState(i) //拿枪
+				[]
+				[Gun == inhand]put_gun.i{Hunter = outhand;}->GunState(i); //put the gun down
+
+//不考虑未射击，因为状态没变
+//射击子弹，子弹可能射中Monster，分数加51。如果射击到分数大于100，游戏结束——win；如果未射中扣分扣到不足0，游戏结束——Loss
+//还应考虑子弹数N，如果开始放空子弹，游戏必须结束，否则也不动弹的情况下无限循环	
+//还要考虑GunState在手里，当然这是必须的，否则也没法射
+BulletState(i) = [Bullet[i] == shooted && N !=0 && score <= 100 && score >= 0 && Monster[i] == sameline && Hunter == sameline]
+					shoot.i{
+						Bullet[i] = hited ;						
+						if(score <= 100 && N != 0){N = N - 1;score = score + 51;gamming = 1;}else{gamming = 0;}
+						M = M-1;
+						}->BulletState(i) //Monster与Hunter在同一直线上，shoot后，射中hitted了，加51,如果分数超了100，游戏结束_Win，反之继续
+				 []
+				 [Bullet[i] == shooted && N !=0 && score <= 100 && score >= 0 && Monster[i] == diffline && Hunter == diffline]
+				 	shoot.i{
+				 		Bullet[i] = shooted;
+						if(score >=0 && N != 0){N = N - 1;score = score - 5; gamming =1;}else{gamming = 0;}
+						} -> BulletState(i)
+				 []
+				 //打了后子弹没了==0，但如果射中后如果此时分数正好满100分，GameOver——win;如果射了未中此时分数不足100，GameOver-Loss;可以拆开为 && Monster[i] == sameline && Hunter == sameline，
+				 //最后一下MOnster 和 Hunter在一条线上，射击中死，gamewin, 和最后一下不在一条线上，未射中，子弹没有了，GAmeloss.
+				 //不拆开的话需要if嵌套
+				 [Bullet[i] == shooted && N == 0 && score <= 100 && Monster[i] == sameline && Hunter == sameline]
+				 	shoot.i{
+				 		Bullet[i] = hited;
+				 		score = score + 51;
+				 		if(score >= 100){gamming = 1;} else {gamming = 0;}
+				 		}-> BulletState(i)
+				 []
+				 [Bullet[i] == shooted && N == 0 && score <= 100 && Monster[i] == diffline && Hunter == diffline]
+				 	shoot.i{
+				 		Bullet[i] = shooted;
+				 		score = score-5;    //未射中，子弹无，gameover
+				 		if(score <= 100){gamming = 1;} else {gamming = 0;} //不用这样写，直接死算了
+				 		}-> BulletState(i);//Monster 与Hunter 不在同一线上，shoot后，只是shooted了,减掉5分，扣得分数.如果扣分导致不足0分，或者没有子弹，游戏结束，Loss
+			
+				  
+MonsterState(i) = [Monster[i] == diffline ]left_move.i{Monster[i] = sameline}->MonsterState(i)
+			 	  []
+				  [Monster[i] == diffline ]left_move.i{Monster[i] = diffline}->MonsterState(i)
+			      []
+			      [Monster[i] == sameline ]right_move.i{Monster[i] = sameline}->MonsterState(i)
+				  []
+				  [Monster[i] == sameline ]right_move.i{Monster[i] = diffline}->MonsterState(i);
+		
+Vizdoom = (|||i:{0..H} @ (HunterState(i) ||| GunState(i) ||| BulletState(i) ||| MonsterState(i)));
+
+
+//定义断言
+
+//	Win Game
+//	Hunter与Monster在同一条line时，Hunter拿枪射击到Monster，统计分数达到100后，gameover，Win
+#define GameWin (score>100);
+// Loss Game
+
+#define GameLoss(score==0&&M!=0);						//放空枪,未击中	
+#define GameLossbyMoving(score<0 && N!=0); 	//只移动导致的gameover						
+
+//断言判定
+#assert Vizdoom deadlockfree;
+#assert	Vizdoom reaches GameWin;						//hunter 需要在同一条line上才能射击到Monster，最终gameover
+#assert Vizdoom reaches GameLoss;							//枪在放下的时候是不可能结束游戏
+#assert Vizdoom reaches GameLossbyMoving;							//移动N次未射中则不能过关
